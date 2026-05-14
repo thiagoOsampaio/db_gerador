@@ -119,6 +119,7 @@ async def _run_workflow(
             session_id=session_id,
             user_email=str(payload.user_email),
             openproject_task_id=payload.openproject_task_id,
+            developer_request=payload.developer_request,
             framework_name=payload.framework_name,
             orm_name=payload.orm_name,
             project_metadata=payload.project_metadata,

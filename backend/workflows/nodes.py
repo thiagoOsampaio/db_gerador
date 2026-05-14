@@ -24,18 +24,19 @@ from backend.agents.openproject_agent import OpenProjectAgent, OpenProjectAgentI
 from backend.agents.performance import PerformanceAgent
 from backend.agents.project_analysis import ProjectAnalysisAgent, ProjectAnalysisInput
 from backend.agents.security import SecurityAgent, SecurityAgentInput
-from backend.domain.enums import AnalysisStatus, ApprovalState
+from backend.domain.enums import AnalysisStatus, ApprovalState, ArtifactType
 from backend.domain.exceptions import (
     AgentExecutionError,
     SchemaIntrospectionError,
 )
 from backend.domain.models.analysis import AnalysisResult
-from backend.domain.enums import ArtifactType
 from backend.observability.logging import get_logger
 from backend.persistence.database import Database
 from backend.repositories.analysis_repository import AnalysisRepository
 from backend.security.credentials import CredentialVault
 from backend.services.database.introspector import DatabaseIntrospector
+from backend.services.openproject.client import OpenProjectClient
+from backend.services.openproject.task_service import OpenProjectTaskService
 from backend.workflows.state import WorkflowState
 
 _logger = get_logger(__name__)
@@ -55,6 +56,10 @@ class WorkflowDeps:
     diagram_agent: DiagramAgent
     migration_agent: MigrationAgent
     openproject_agent: OpenProjectAgent
+    # OpenProject HTTP wiring — clients are built per-request inside the
+    # nodes using the per-session decrypted token.
+    openproject_api_url: str
+    openproject_timeout: int = 30
 
 
 # ---------------------------------------------------------------------------
@@ -107,22 +112,58 @@ def make_validate_input(deps: WorkflowDeps):
         await _persist_status(deps, state, AnalysisStatus.INTROSPECTING)
 
         session_id = UUID(state["session_id"])
-        # Fetch encrypted credential from DB; decrypt; introspect; discard.
+        # Fetch encrypted credential + OpenProject token from DB.
         async for db_session in deps.database.session():
             repo = AnalysisRepository(db_session)
-            row = await repo.get_active_credential(session_id)
-            if row is None:
+            cred_row = await repo.get_active_credential(session_id)
+            if cred_row is None:
                 raise SchemaIntrospectionError("No active credential for session")
-            connection = deps.credential_vault.decrypt(row.ciphertext, row.expires_at)
+            connection = deps.credential_vault.decrypt(
+                cred_row.ciphertext, cred_row.expires_at
+            )
+            session_row = await repo.get_session(session_id)
+            token_ct = session_row.openproject_token_ciphertext
             break
 
+        # Introspect the customer database (read-only).
         schema = await deps.introspector.introspect(connection)
         # ``connection`` falls out of scope here; password is GC'd.
-
         await _log_event(deps, state, "introspector", "schema_extracted",
                          {"tables": len(schema.tables)})
+
+        # Fetch the OpenProject task description so the developer's
+        # request and the ticket's intent both feed the agents.
+        task_description: str | None = None
+        if token_ct:
+            try:
+                token = deps.credential_vault.decrypt_token(token_ct)
+                async with OpenProjectClient(
+                    api_url=deps.openproject_api_url,
+                    token=token,
+                    timeout=deps.openproject_timeout,
+                ) as client:
+                    tasks = OpenProjectTaskService(client)
+                    wp = await tasks.get_work_package(state["openproject_task_id"])
+                desc = (wp.get("description") or {})
+                if isinstance(desc, dict):
+                    task_description = desc.get("raw") or desc.get("plain") or None
+                else:
+                    task_description = str(desc) or None
+                await _log_event(
+                    deps, state, "openproject", "task_fetched",
+                    {"has_description": bool(task_description)},
+                )
+            except Exception:  # noqa: BLE001
+                # Non-fatal: the workflow can still run on the developer
+                # request alone. The traceback is logged for diagnosis.
+                _logger.exception(
+                    "workflow.openproject_fetch_failed",
+                    session_id=str(session_id),
+                )
+
         return {
             "schema_snapshot": schema,
+            "openproject_task_description": task_description,
             "status": AnalysisStatus.ANALYZING_PROJECT,
         }
 
@@ -140,6 +181,8 @@ def make_analyze_project(deps: WorkflowDeps):
             schema_snapshot=state.get("schema_snapshot"),
             user_entities=state.get("user_entities") or [],
             user_relationships=state.get("user_relationships") or [],
+            developer_request=state.get("developer_request"),
+            openproject_task_description=state.get("openproject_task_description"),
             rejection_feedback=state.get("rejection_feedback"),
         )
         ir = await deps.project_analysis_agent.run(payload, _ctx(state))
@@ -250,6 +293,10 @@ def make_generate_erd(deps: WorkflowDeps):
             await db_session.commit()
             break
         await _log_event(deps, state, "diagram", "rendered")
+        # The graph stops here (interrupt_before=await_approval). Persist
+        # ``AWAITING_APPROVAL`` now so polling clients see the correct
+        # status before any node downstream of the interrupt runs.
+        await _persist_status(deps, state, AnalysisStatus.AWAITING_APPROVAL)
         return {
             "diagram": artifact,
             "status": AnalysisStatus.AWAITING_APPROVAL,

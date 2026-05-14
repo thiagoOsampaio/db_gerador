@@ -35,6 +35,11 @@ class StartAnalysisRequest(BaseModel):
     # never returned in any response.
     openproject_token: SecretStr
 
+    # Free-form description of what the developer wants the analysis to
+    # accomplish. Combined with the OpenProject task description to form
+    # the authoritative requirement statement passed to the agents.
+    developer_request: str = Field(min_length=1, max_length=8000)
+
     # Customer database connection (encrypted on arrival)
     database_type: DatabaseType
     database_host: str = Field(min_length=1)

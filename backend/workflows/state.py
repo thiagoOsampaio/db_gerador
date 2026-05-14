@@ -50,6 +50,10 @@ class WorkflowState(TypedDict, total=False):
     project_metadata: dict[str, object]
     user_entities: list[str]
     user_relationships: list[str]
+    # Authoritative natural-language requirement: the developer's own
+    # request plus the description fetched from the OpenProject task.
+    developer_request: str | None
+    openproject_task_description: str | None
 
     # Pipeline intermediate representations
     schema_snapshot: Schema | None

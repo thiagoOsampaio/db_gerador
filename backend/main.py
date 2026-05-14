@@ -112,6 +112,8 @@ async def lifespan(app: FastAPI):
             diagram_agent=agents["diagram"],  # type: ignore[arg-type]
             migration_agent=agents["migration"],  # type: ignore[arg-type]
             openproject_agent=agents["openproject"],  # type: ignore[arg-type]
+            openproject_api_url=settings.OPENPROJECT_API_URL,
+            openproject_timeout=settings.OPENPROJECT_TIMEOUT,
         )
         graph = build_analysis_graph(deps, checkpointer)
         engine = WorkflowEngine(graph)

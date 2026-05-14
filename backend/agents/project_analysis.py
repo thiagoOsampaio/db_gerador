@@ -11,10 +11,13 @@ from backend.domain.models.schema import Schema
 _SYSTEM_PROMPT = """\
 You are a senior database architect.
 
-Your task is to analyze the provided project metadata and database schema
-and produce a framework-agnostic Project Intermediate Representation (IR).
+Your task is to analyze the provided project metadata, database schema
+and the developer's stated requirements, then produce a
+framework-agnostic Project Intermediate Representation (IR).
 
 Guidelines:
+- Treat the developer request and the OpenProject task description as
+  the authoritative statement of intent. The IR must satisfy them.
 - Infer the framework and ORM if hinted at, otherwise leave them null.
 - Each entity must have a clear name and inferred attributes.
 - Relationships use explicit cardinality (one_to_one / one_to_many /
@@ -36,6 +39,9 @@ class ProjectAnalysisInput(BaseModel):
     schema_snapshot: Schema | None = None
     user_entities: list[str] = Field(default_factory=list)
     user_relationships: list[str] = Field(default_factory=list)
+    # Authoritative natural-language requirements that drive the IR.
+    developer_request: str | None = None
+    openproject_task_description: str | None = None
     # Populated only when re-entering the workflow after a rejection.
     rejection_feedback: str | None = None
 
@@ -95,6 +101,9 @@ class ProjectAnalysisAgent(BaseAgent[ProjectAnalysisInput, ProjectIR]):
             else ""
         )
         return (
+            f"Developer request:\n{payload.developer_request or '(none provided)'}\n\n"
+            f"OpenProject task description:\n"
+            f"{payload.openproject_task_description or '(not available)'}\n\n"
             f"Framework hint: {payload.framework_name or 'unknown'}\n"
             f"ORM hint: {payload.orm_name or 'unknown'}\n"
             f"User-provided entities: {payload.user_entities}\n"
