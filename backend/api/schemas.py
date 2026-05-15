@@ -107,12 +107,6 @@ class SqlResponse(BaseModel):
     summary: str | None = None
 
 
-class ApprovalRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    user_email: EmailStr
-
-
 class RejectionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    user_email: EmailStr
     feedback: str | None = None

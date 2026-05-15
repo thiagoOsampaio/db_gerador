@@ -397,6 +397,7 @@ def make_update_openproject(deps: WorkflowDeps):
             user_email=state["user_email"],
             openproject_token=token,
             result=result,
+            developer_request=state.get("developer_request"),
         )
         update = await deps.openproject_agent.run(payload, _ctx(state))
         await _persist_status(deps, state, AnalysisStatus.COMPLETED)

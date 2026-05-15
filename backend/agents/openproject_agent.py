@@ -30,6 +30,9 @@ class OpenProjectAgentInput(BaseModel):
     user_email: str
     openproject_token: SecretStr
     result: AnalysisResult
+    # Echoed back into the OpenProject comment so the engineer reading
+    # the ticket can see what was asked alongside what was delivered.
+    developer_request: str | None = None
 
 
 class OpenProjectAgent(BaseAgent[OpenProjectAgentInput, OpenProjectTaskUpdate]):
@@ -58,6 +61,7 @@ class OpenProjectAgent(BaseAgent[OpenProjectAgentInput, OpenProjectTaskUpdate]):
         comment_body = self._render_comment_markdown(
             payload.user_email,
             payload.result,
+            developer_request=payload.developer_request,
         )
 
         # Per-request client built from the user-supplied token.
@@ -131,56 +135,82 @@ class OpenProjectAgent(BaseAgent[OpenProjectAgentInput, OpenProjectTaskUpdate]):
         return ""
 
     @staticmethod
-    def _render_comment_markdown(user_email: str, result: AnalysisResult) -> str:
+    def _render_comment_markdown(
+        user_email: str,
+        result: AnalysisResult,
+        *,
+        developer_request: str | None = None,
+    ) -> str:
         perf = result.performance_recommendations
         sec = result.security_recommendations
         lines: list[str] = [
-            "## db_gerador — Database Architecture Analysis",
+            "## db_gerador — Resultado da análise",
             "",
-            f"Requested by: {user_email}",
+            f"Solicitado por: {user_email}",
             "",
         ]
 
-        if result.diagram:
+        if developer_request:
             lines.extend(
                 [
-                    "### ER Diagram (Mermaid)",
+                    "### Resumo do pedido",
                     "",
-                    "```mermaid",
-                    result.diagram.content,
-                    "```",
+                    developer_request.strip(),
                     "",
                 ]
             )
+
+        # Justificativa narrativa (por que essas tabelas / essa modelagem).
+        rationale_chunks: list[str] = []
+        if result.project_ir and result.project_ir.notes:
+            rationale_chunks.append(result.project_ir.notes.strip())
+        if result.relational_model and result.relational_model.notes:
+            rationale_chunks.append(result.relational_model.notes.strip())
+        if rationale_chunks:
+            lines.append("### Justificativa / Decisões")
+            lines.append("")
+            for chunk in rationale_chunks:
+                lines.append(chunk)
+                lines.append("")
+
+        # Tabelas que compõem a entrega (apenas as escopadas ao pedido).
+        if result.relational_model and result.relational_model.tables:
+            lines.append("### Tabelas propostas")
+            lines.append("")
+            for table in result.relational_model.tables:
+                desc = (table.description or "_sem descrição fornecida._").strip()
+                lines.append(f"- **`{table.name}`** — {desc}")
+            lines.append("")
 
         lines.extend(_render_recommendation_section("Performance", perf))
-        lines.extend(_render_recommendation_section("Security", sec))
+        lines.extend(_render_recommendation_section("Segurança", sec))
 
-        if result.sql_artifact:
-            lines.extend(
-                [
-                    "### SQL Migration (PostgreSQL)",
-                    "",
-                    "See attached `migration.sql`.",
-                    f"Summary: {result.sql_artifact.summary or 'n/a'}",
-                    "",
-                ]
+        # Artefatos anexados ao próprio work package.
+        attached: list[str] = []
+        if result.diagram:
+            attached.append(
+                "- `erd.mmd` — diagrama Mermaid da modelagem proposta."
             )
+        if result.sql_artifact:
+            sql_summary = result.sql_artifact.summary or "n/a"
+            attached.append(
+                f"- `migration.sql` — script PostgreSQL com as alterações "
+                f"propostas (resumo: {sql_summary})."
+            )
+        if attached:
+            lines.append("### Anexos")
+            lines.append("")
+            lines.extend(attached)
+            lines.append("")
 
         return "\n".join(lines)
-
-    def build_system_prompt(self) -> str:
-        raise NotImplementedError
-
-    def build_user_prompt(self, payload: OpenProjectAgentInput) -> str:
-        raise NotImplementedError
 
 
 
 def _render_recommendation_section(title: str, items: list) -> list[str]:  # type: ignore[type-arg]
     if not items:
-        return [f"### {title} Recommendations", "", "_No recommendations._", ""]
-    out = [f"### {title} Recommendations", ""]
+        return [f"### Recomendações de {title}", "", "_Nenhuma recomendação._", ""]
+    out = [f"### Recomendações de {title}", ""]
     for r in items:
         sev = getattr(r, "severity", "info")
         out.append(f"- **[{sev}]** {r.title}: {r.description}")

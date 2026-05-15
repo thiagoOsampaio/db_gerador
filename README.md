@@ -1,12 +1,5 @@
 # db_gerador — AI Database Architecture Backend
 
-Python backend that orchestrates Google **Gemini** through **LangGraph** to
-produce normalized relational models, ER diagrams, SQL migrations, and
-performance/security recommendations from a customer database schema —
-then publishes the result to an OpenProject task.
-
-## Architecture
-
 ```
 HTTP (FastAPI)
     │
@@ -25,41 +18,11 @@ WorkflowEngine ──► LangGraph StateGraph ──► PostgreSQL checkpointer
     └─ update_openproject (comment + attachments)
 ```
 
-- **LLM**: Gemini only (`langchain-google-genai`). No multi-provider.
-- **State**: PostgreSQL (application data + LangGraph checkpoints). No Redis.
-- **Secrets**: Backend env vars; customer DB password encrypted (Fernet, TTL).
-- **Outputs**: 100% structured Pydantic v2; SQL/Mermaid are deterministic.
-
-## Como subir o servidor para testar
-
-1. Copie o arquivo `.env.example` para `.env` e preencha as variáveis de ambiente necessárias (como a `GEMINI_API_KEY`):
-```bash
-cp .env.example .env
-```
-
-2. Certifique-se de que possui um banco de dados PostgreSQL rodando (ele é usado para guardar os metadados da aplicação, como logs, sessões e checkpoint do fluxo do LangGraph, não os dados do cliente):
-```bash
-docker compose up -d postgres
-```
-
-3. Instale as dependências da aplicação usando `pip` com o ambiente virtual ativado:
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
-```
-
-4. Aplique as migrações no banco de dados para criar a estrutura correta no schema configurado (padrão: `analisador_de_banco`):
-```bash
-alembic upgrade head
-```
-
-5. Rode o servidor usando `uvicorn`:
+1. Rode o servidor usando `uvicorn`:
 ```bash
 uvicorn backend.main:app --reload
 ```
-
-O servidor estará rodando em `http://localhost:8000`. Você pode acessar o Swagger UI em `http://localhost:8000/docs`.
+Swagger UI em `http://localhost:8000/docs`.
 
 ## Fluxo de Utilização (Overview)
 
@@ -68,7 +31,7 @@ O backend do `db_gerador` utiliza um fluxo com um passo de **Aprovação Humana 
 1. **Iniciar Análise**: O usuário chama a API de `start`, fornecendo as credenciais de leitura do banco de dados alvo, dados adicionais de sua arquitetura e seu **token pessoal do OpenProject**. O token é criptografado e salvo, a senha é criptografada e o fluxo assíncrono é iniciado. 
    *(O código nunca realiza alterações - scripts, inserts, drops - no banco de dados do cliente)*.
 2. **Processamento Inicial**: O backend acessa o banco (somente-leitura) e extrai o schema. Em seguida, os agentes baseados em IA (Gemini) atuam paralelamente modelando o projeto, validando performance e sugerindo seguranças.
-3. **Diagramação e Pausa**: Um diagrama Mermaid é gerado de forma determinística (sem IA). **O fluxo é interrompido** aguardando a decisão humana (status: `awaiting_approval`).
+3. **Diagramação e Pausa**: Um diagrama Mermaid é gerado de forma determinística (sem IA) refletindo apenas as tabelas escopadas ao pedido do usuário (novas, alteradas e referências FK diretas). Tabelas existentes do banco que não tocam o pedido não entram no diagrama. **O fluxo é interrompido** aguardando a decisão humana (status: `awaiting_approval`).
 4. **Avaliação**: O usuário solicita o diagrama via API para analisá-lo visualmente.
 5. **Decisão Humana**:
    - **Rejeitar (`reject`)**: O usuário envia os apontamentos do que não gostou. O fluxo volta para a etapa de modelagem instruindo a IA a corrigir conforme o feedback enviado. O fluxo será novamente pausado para aprovação posterior.
@@ -153,12 +116,11 @@ O backend do `db_gerador` utiliza um fluxo com um passo de **Aprovação Humana 
 
 ### 4. Rejeitar a Proposta
 **Endpoint:** `POST /analysis/{session_id}/reject`
-**Para que serve:** O usuário invoca essa rota caso a modelagem/diagrama sugerida pela IA não atenda às expectativas. O usuário envia em texto livre os motivos.
+**Para que serve:** O usuário invoca essa rota caso a modelagem/diagrama sugerida pela IA não atenda às expectativas. O usuário envia em texto livre os motivos. O e-mail do solicitante é recuperado a partir da própria sessão (informado em `POST /analysis/start`), portanto não precisa ser reenviado.
 
 **O que recebe (JSON Body):**
 ```json
 {
-  "user_email": "dba@exemplo.com",
   "feedback": "A tabela 'users' não deveria ter o campo 'cpf', favor retirar. Também mude a relação de orders para 1:N."
 }
 ```
@@ -178,15 +140,10 @@ O backend do `db_gerador` utiliza um fluxo com um passo de **Aprovação Humana 
 ---
 
 ### 5. Aprovar a Proposta
-**Endpoint:** `POST /analysis/{session_id}/approve`
+**Endpoint:** `GET /analysis/{session_id}/approve`
 **Para que serve:** Usada quando o usuário visualizou o diagrama e considerou o trabalho aprovado. Ao dar o aceite, o sistema sairá da pausa, processará deterministicamente o arquivo `.sql` de alteração/criação das tabelas e o submeterá juntamente com o diagrama Mermaid diretamente na task do OpenProject.
 
-**O que recebe (JSON Body):**
-```json
-{
-  "user_email": "dba@exemplo.com"
-}
-```
+**O que recebe:** Apenas o parâmetro de rota `session_id`. O e-mail do solicitante é recuperado da própria sessão (informado em `POST /analysis/start`), portanto não precisa ser reenviado.
 
 **O que devolve:**
 ```json
@@ -197,7 +154,7 @@ O backend do `db_gerador` utiliza um fluxo com um passo de **Aprovação Humana 
   "updated_at": "2026-05-14T10:10:00Z"
 }
 ```
-*O status de aprovação mudou, o workflow acordará em background e avançará com a atualização no OpenProject.*
+*O status de aprovação mudou, o workflow acordará em background e avançará com a atualização no OpenProject. No OpenProject, o comentário resultante traz um resumo do pedido, a justificativa das decisões de modelagem, a lista das tabelas propostas e as recomendações de performance/segurança, além dos anexos `erd.mmd` (diagrama Mermaid) e `migration.sql` (script PostgreSQL com as alterações).*
 
 ---
 

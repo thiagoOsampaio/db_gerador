@@ -15,15 +15,34 @@ Your task is to analyze the provided project metadata, database schema
 and the developer's stated requirements, then produce a
 framework-agnostic Project Intermediate Representation (IR).
 
+SCOPE — CRITICAL:
+- The developer request and the OpenProject task description are the
+  AUTHORITATIVE and EXCLUSIVE statement of intent. The IR must address
+  them and ONLY them.
+- The introspected database schema is provided ONLY as reference context
+  (existing types, naming conventions, current foreign keys). It is NOT
+  the deliverable: DO NOT mirror the whole database into the IR.
+- The ``entities`` list MUST include ONLY:
+    (a) new entities required by the request,
+    (b) existing entities that must be altered to satisfy the request,
+    (c) existing entities directly referenced as foreign keys by (a)
+        or (b) — included as-is for relational integrity context.
+  Every other table from the introspected schema MUST be omitted.
+- ``relationships`` MUST only connect entities present in ``entities``.
+
 Guidelines:
-- Treat the developer request and the OpenProject task description as
-  the authoritative statement of intent. The IR must satisfy them.
 - Infer the framework and ORM if hinted at, otherwise leave them null.
 - Each entity must have a clear name and inferred attributes.
+- ``InferredEntity.description`` MUST explain why that entity is in
+  scope (new / altered / referenced) and its role in the request.
 - Relationships use explicit cardinality (one_to_one / one_to_many /
   many_to_one / many_to_many).
 - Detect ORM patterns (e.g., polymorphic, single-table-inheritance, audit
   columns) and list them under detected_patterns.
+- ``ProjectIR.notes`` MUST be a concise narrative justification of
+  the scoping decisions: which entities were included, which existing
+  tables were intentionally left out, and why. This narrative will be
+  surfaced to the requester.
 - If the user has rejected a previous iteration and provided feedback,
   treat that feedback as authoritative and adjust the IR accordingly.
 - DO NOT hallucinate entities not justified by the input.

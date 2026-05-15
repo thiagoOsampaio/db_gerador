@@ -20,7 +20,6 @@ from backend.api.dependencies import (
 )
 from backend.api.schemas import (
     AnalysisResponse,
-    ApprovalRequest,
     DiagramResponse,
     RejectionRequest,
     SqlResponse,
@@ -232,12 +231,14 @@ async def get_sql(session_id: UUID, repo: RepoDep) -> SqlResponse:
 
 
 # ---------------------------------------------------------------------------
-# POST /analysis/{id}/approve
+# GET /analysis/{id}/approve
 # ---------------------------------------------------------------------------
-@router.post("/{session_id}/approve", response_model=StatusResponse)
+# The approver's identity is the same ``user_email`` supplied in
+# ``POST /analysis/start`` and persisted in the session row, so this
+# endpoint takes no body and is safe as an idempotent GET trigger.
+@router.get("/{session_id}/approve", response_model=StatusResponse)
 async def approve_analysis(
     session_id: UUID,
-    body: ApprovalRequest,
     repo: RepoDep,
     session: SessionDep,
     workflow: WorkflowDep,
@@ -259,7 +260,7 @@ async def approve_analysis(
 
     background.add_task(_resume_after_approval, workflow, session_id, approve=True)
 
-    _logger.info("analysis.approved", session_id=str(session_id), user=str(body.user_email))
+    _logger.info("analysis.approved", session_id=str(session_id), user=row.user_email)
     return StatusResponse(
         session_id=row.id,
         status=row.status,
@@ -302,7 +303,7 @@ async def reject_analysis(
         feedback=body.feedback,
     )
 
-    _logger.info("analysis.rejected", session_id=str(session_id), user=str(body.user_email))
+    _logger.info("analysis.rejected", session_id=str(session_id), user=row.user_email)
     return StatusResponse(
         session_id=row.id,
         status=row.status,
