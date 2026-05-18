@@ -5,10 +5,11 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from backend.agents.base import BaseAgent
+from backend.agents.knowledge import build_system_prompt
 from backend.domain.models.ir import ProjectIR
 from backend.domain.models.schema import Schema
 
-_SYSTEM_PROMPT = """\
+_ROLE_PROMPT = """\
 You are a senior database architect.
 
 Your task is to analyze the provided project metadata, database schema
@@ -49,6 +50,8 @@ Guidelines:
 - DO NOT include credentials, hostnames, ports, or any secret data.
 - Reply strictly using the provided structured schema.
 """
+
+_SYSTEM_PROMPT = build_system_prompt(_ROLE_PROMPT)
 
 
 class ProjectAnalysisInput(BaseModel):

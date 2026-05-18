@@ -89,6 +89,26 @@ class AnalysisRepository:
         row = await self.get_session(session_id)
         row.result_snapshot = snapshot
 
+    async def latest_session_for_task(
+        self, openproject_task_id: str
+    ) -> UUID | None:
+        """Return the ``id`` of the most recent session for the task.
+
+        Used by ``POST /analysis/retake`` to link the new run back to
+        the previous analysis without coupling sessions in the database
+        schema.
+        """
+        stmt = (
+            select(AnalysisSessionModel.id)
+            .where(
+                AnalysisSessionModel.openproject_task_id == openproject_task_id
+            )
+            .order_by(AnalysisSessionModel.created_at.desc())
+            .limit(1)
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
     # ------------------------------------------------------------------
     # Artifacts
     # ------------------------------------------------------------------

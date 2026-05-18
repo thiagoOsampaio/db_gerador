@@ -5,6 +5,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from backend.agents.base import BaseAgent
+from backend.agents.knowledge import build_system_prompt
 from backend.agents.project_analysis import _compact_schema
 from backend.domain.models.ir import RelationalModel
 from backend.domain.models.recommendations import SecurityRecommendation
@@ -20,7 +21,7 @@ class SecurityOutput(BaseModel):
     recommendations: list[SecurityRecommendation] = Field(default_factory=list)
 
 
-_SYSTEM_PROMPT = """\
+_ROLE_PROMPT = """\
 You are a senior security and data-privacy engineer.
 
 Analyze the provided RelationalModel (and optional source schema) for
@@ -45,6 +46,8 @@ Each recommendation must include:
 DO NOT include credentials or any secret data.
 Reply strictly using the provided structured schema.
 """
+
+_SYSTEM_PROMPT = build_system_prompt(_ROLE_PROMPT)
 
 
 class SecurityAgent(BaseAgent[SecurityAgentInput, SecurityOutput]):

@@ -5,9 +5,10 @@ from __future__ import annotations
 from pydantic import BaseModel
 
 from backend.agents.base import BaseAgent
+from backend.agents.knowledge import build_system_prompt
 from backend.domain.models.ir import ProjectIR, RelationalModel
 
-_SYSTEM_PROMPT = """\
+_ROLE_PROMPT = """\
 You are a senior relational database designer.
 
 Convert the provided Project IR into a normalized relational model
@@ -41,6 +42,8 @@ Requirements:
 - DO NOT include credentials, hostnames, or any secret data.
 - Reply strictly using the provided structured schema.
 """
+
+_SYSTEM_PROMPT = build_system_prompt(_ROLE_PROMPT)
 
 
 class ModelingAgent(BaseAgent[ProjectIR, RelationalModel]):

@@ -64,6 +64,19 @@ class StartAnalysisResponse(BaseModel):
     message: str = "Analysis started"
 
 
+class RetakeAnalysisRequest(StartAnalysisRequest):
+    """Request body for ``POST /analysis/retake``.
+
+    Mesma carga de :class:`StartAnalysisRequest`. O DBA reabre a task no
+    OpenProject com um novo ``developer_request`` para que a IA proponha
+    uma abordagem diferente. Uma nova sessão é criada e vinculada à
+    mesma ``openproject_task_id``; ao final do fluxo, um novo comentário
+    é anexado à task preservando o histórico.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class StatusResponse(BaseModel):
     session_id: UUID
     status: AnalysisStatus
@@ -97,6 +110,11 @@ class DiagramResponse(BaseModel):
     format: str = "mermaid"
     content: str
     summary: str | None = None
+    # Narrativa explicando como a IA propõe resolver o problema descrito
+    # na task do OpenProject e no payload da requisição (pt-BR).
+    rationale: str | None = None
+    # Lista de medidas/passos concretos sugeridos pela IA.
+    proposed_actions: list[str] = Field(default_factory=list)
 
 
 class SqlResponse(BaseModel):

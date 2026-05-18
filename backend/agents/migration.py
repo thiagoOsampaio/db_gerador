@@ -1,10 +1,3 @@
-"""Migration Agent — deterministic SQL generation from ``RelationalModel``.
-
-The Migration Agent does NOT invoke the LLM for DDL: SQL generation is
-deterministic and audit-friendly. The agent simply orchestrates the
-``SqlGenerator`` and returns both artifacts (DDL + migration plan).
-"""
-
 from __future__ import annotations
 
 from pydantic import BaseModel

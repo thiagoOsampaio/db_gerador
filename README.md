@@ -96,9 +96,9 @@ O backend do `db_gerador` utiliza um fluxo com um passo de **Aprovação Humana 
 
 ---
 
-### 3. Visualizar o Diagrama (ERD)
+### 3. Visualizar o Diagrama (ERD) e Medidas Propostas
 **Endpoint:** `GET /analysis/{session_id}/diagram`
-**Para que serve:** Retorna a string pura no formato Mermaid, representando a modelagem relacional proposta pela IA. O usuário utiliza esta saída para renderizar e visualizar as tabelas e relacionamentos sugeridos.
+**Para que serve:** Retorna a string pura no formato Mermaid, representando visualmente a solução proposta pela IA para o pedido do usuário. Além disso, retorna uma narrativa (`rationale`) e medidas concretas sugeridas (`proposed_actions`) para resolver o problema.
 
 **O que recebe:** Apenas o parâmetro de rota `session_id`.
 
@@ -108,7 +108,12 @@ O backend do `db_gerador` utiliza um fluxo com um passo de **Aprovação Humana 
   "session_id": "f0e9b9d3-...",
   "format": "mermaid",
   "content": "erDiagram\n    users { ... }",
-  "summary": "Descrição sumarizada opcional do diagrama."
+  "summary": "Descrição sumarizada opcional do diagrama.",
+  "rationale": "Para resolver este pedido, propomos a criação da tabela X...",
+  "proposed_actions": [
+    "Tabela `users`: adicionada nova coluna status",
+    "Performance — Criar índice na coluna status"
+  ]
 }
 ```
 
@@ -158,13 +163,23 @@ O backend do `db_gerador` utiliza um fluxo com um passo de **Aprovação Humana 
 
 ---
 
-### 6. Ver Resumo Completo (Opcional)
+### 6. Nova Abordagem (Retake pelo DBA)
+**Endpoint:** `POST /analysis/retake`
+**Para que serve:** Quando o DBA lê a task no OpenProject e nota que a modelagem não está como deveria, ele pode solicitar que a IA faça uma nova abordagem usando os mesmos parâmetros de conexão originais, mas passando uma nova instrução em `developer_request`. Uma nova sessão é iniciada, vinculada à mesma task, gerando um novo comentário preservando o histórico.
+
+**O que recebe (JSON Body):** Mesma carga do `POST /analysis/start`.
+
+**O que devolve:** Mesma carga do `POST /analysis/start` (informa o ID da nova sessão criada).
+
+---
+
+### 7. Ver Resumo Completo (Opcional)
 **Endpoint:** `GET /analysis/{session_id}`
 **Para que serve:** Puxa o objeto completo de estado processado até o momento, contendo as recomendações textuais de performance, segurança, SQL e metadados adicionais.
 
 ---
 
-### 7. Ver SQL Produzido (Opcional)
+### 8. Ver SQL Produzido (Opcional)
 **Endpoint:** `GET /analysis/{session_id}/sql`
 **Para que serve:** Retorna o `.sql` de Data Definition Language (DDL) e de migrações que a plataforma gerou. **A plataforma nunca roda esse código de forma automática, apenas entrega e anexa no OpenProject.**
 
@@ -184,8 +199,8 @@ Para testar no Insomnia, basta seguir estes passos:
 3. **GET Request (Diagrama)**:
    - Crie uma rota `GET` para `http://localhost:8000/analysis/<COLE_O_SESSION_ID_AQUI>/diagram`
    - Pegue o valor de `content` (o Mermaid) e jogue em um renderizador online (como o mermaid.live) para ver a modelagem.
-4. **POST Request (Approve)**:
-   - Crie uma rota `POST` para `http://localhost:8000/analysis/<COLE_O_SESSION_ID_AQUI>/approve`
+4. **GET Request (Approve)**:
+   - Crie uma rota `GET` para `http://localhost:8000/analysis/<COLE_O_SESSION_ID_AQUI>/approve`
    - Body JSON: `{ "user_email": "seu_email@exemplo.com" }`
    - Envie. Se checar a sua Task lá no OpenProject logo depois, verá que a plataforma já criou um comentário e anexou os arquivos `erd.mmd` e `migration.sql`.
 

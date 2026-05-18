@@ -33,6 +33,10 @@ class OpenProjectAgentInput(BaseModel):
     # Echoed back into the OpenProject comment so the engineer reading
     # the ticket can see what was asked alongside what was delivered.
     developer_request: str | None = None
+    # ``True`` when this run was triggered by ``POST /analysis/retake``
+    # — the OpenProject comment header is then adjusted accordingly.
+    is_retake: bool = False
+    parent_session_id: str | None = None
 
 
 class OpenProjectAgent(BaseAgent[OpenProjectAgentInput, OpenProjectTaskUpdate]):
@@ -62,6 +66,8 @@ class OpenProjectAgent(BaseAgent[OpenProjectAgentInput, OpenProjectTaskUpdate]):
             payload.user_email,
             payload.result,
             developer_request=payload.developer_request,
+            is_retake=payload.is_retake,
+            parent_session_id=payload.parent_session_id,
         )
 
         # Per-request client built from the user-supplied token.
@@ -140,15 +146,35 @@ class OpenProjectAgent(BaseAgent[OpenProjectAgentInput, OpenProjectTaskUpdate]):
         result: AnalysisResult,
         *,
         developer_request: str | None = None,
+        is_retake: bool = False,
+        parent_session_id: str | None = None,
     ) -> str:
         perf = result.performance_recommendations
         sec = result.security_recommendations
+
+        if is_retake:
+            heading = "## db_gerador — Nova abordagem (retake)"
+            intro: str | None = (
+                "Esta análise foi disparada por um DBA via "
+                "`/analysis/retake` porque a abordagem anterior precisava "
+                "ser revista."
+            )
+            if parent_session_id:
+                intro = (
+                    f"{intro} Sessão anterior: `{parent_session_id}`."
+                )
+        else:
+            heading = "## db_gerador — Resultado da análise"
+            intro = None
+
         lines: list[str] = [
-            "## db_gerador — Resultado da análise",
+            heading,
             "",
             f"Solicitado por: {user_email}",
             "",
         ]
+        if intro:
+            lines.extend([intro, ""])
 
         if developer_request:
             lines.extend(

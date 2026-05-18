@@ -40,6 +40,8 @@ class WorkflowEngine:
         project_metadata: dict[str, Any] | None = None,
         user_entities: list[str] | None = None,
         user_relationships: list[str] | None = None,
+        is_retake: bool = False,
+        parent_session_id: UUID | None = None,
     ) -> dict[str, Any]:
         """Kick off the workflow; runs until the approval interrupt."""
         initial = {
@@ -56,6 +58,10 @@ class WorkflowEngine:
             "performance_recommendations": [],
             "security_recommendations": [],
             "errors": [],
+            "is_retake": is_retake,
+            "parent_session_id": (
+                str(parent_session_id) if parent_session_id else None
+            ),
         }
         return await self._graph.ainvoke(initial, self._config(session_id))
 

@@ -79,3 +79,9 @@ class WorkflowState(TypedDict, total=False):
     approval_state: ApprovalState
     rejection_feedback: str | None
     errors: Annotated[list[str], _merge_errors]
+
+    # Retake metadata. Set when the DBA reopens an already-completed
+    # task via ``POST /analysis/retake`` so the OpenProject comment
+    # header can flag this run as a new approach.
+    is_retake: bool
+    parent_session_id: str | None

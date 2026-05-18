@@ -17,7 +17,7 @@ from uuid import UUID
 from langgraph.types import Send
 
 from backend.agents.base import AgentContext
-from backend.agents.diagram import DiagramAgent
+from backend.agents.diagram import DiagramAgent, DiagramAgentInput
 from backend.agents.migration import MigrationAgent
 from backend.agents.modeling import ModelingAgent
 from backend.agents.openproject_agent import OpenProjectAgent, OpenProjectAgentInput
@@ -281,7 +281,13 @@ def make_generate_erd(deps: WorkflowDeps):
         model = state.get("relational_model")
         if model is None:
             raise AgentExecutionError("diagram", "Missing relational_model")
-        artifact = await deps.diagram_agent.run(model, _ctx(state))
+        payload = DiagramAgentInput(
+            developer_request=state.get("developer_request"),
+            openproject_task_description=state.get("openproject_task_description"),
+            project_ir=state.get("project_ir"),
+            relational_model=model,
+        )
+        artifact = await deps.diagram_agent.run(payload, _ctx(state))
         async for db_session in deps.database.session():
             repo = AnalysisRepository(db_session)
             await repo.save_artifact(
@@ -398,6 +404,8 @@ def make_update_openproject(deps: WorkflowDeps):
             openproject_token=token,
             result=result,
             developer_request=state.get("developer_request"),
+            is_retake=bool(state.get("is_retake")),
+            parent_session_id=state.get("parent_session_id"),
         )
         update = await deps.openproject_agent.run(payload, _ctx(state))
         await _persist_status(deps, state, AnalysisStatus.COMPLETED)

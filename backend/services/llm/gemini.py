@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 from typing import TypeVar
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
 from pydantic import BaseModel
 from tenacity import (
@@ -67,10 +67,14 @@ class GeminiService:
         sanitized, structured domain models only.
         """
         structured = self._chat.with_structured_output(output_schema)
-        messages = [
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=user_prompt),
-        ]
+        # Compose a reusable LangChain pipeline: prompt template -> LLM.
+        # ``{system}`` / ``{user}`` are injected as raw strings (no
+        # f-string formatting on the template itself) so curly braces in
+        # the prompt body are preserved.
+        prompt = ChatPromptTemplate.from_messages(
+            [("system", "{system}"), ("human", "{user}")]
+        )
+        chain = prompt | structured
 
         async def _call() -> T:
             async with self._semaphore:
@@ -79,7 +83,9 @@ class GeminiService:
                     model=self._model_name,
                     schema=output_schema.__name__,
                 )
-                result = await structured.ainvoke(messages)
+                result = await chain.ainvoke(
+                    {"system": system_prompt, "user": user_prompt}
+                )
             if not isinstance(result, output_schema):
                 # ``with_structured_output`` may return a dict in some
                 # versions — coerce defensively.
@@ -103,12 +109,14 @@ class GeminiService:
         user_prompt: str,
     ) -> str:
         """Free-form text invocation. Avoid for primary data flows."""
-        messages = [
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=user_prompt),
-        ]
+        prompt = ChatPromptTemplate.from_messages(
+            [("system", "{system}"), ("human", "{user}")]
+        )
+        chain = prompt | self._chat
         async with self._semaphore:
-            response = await self._chat.ainvoke(messages)
+            response = await chain.ainvoke(
+                {"system": system_prompt, "user": user_prompt}
+            )
         content = response.content
         if isinstance(content, list):
             return "".join(str(p) for p in content)

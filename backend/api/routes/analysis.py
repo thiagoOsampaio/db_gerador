@@ -8,6 +8,7 @@ and delegates orchestration to :class:`WorkflowEngine`.
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, status
@@ -22,6 +23,7 @@ from backend.api.schemas import (
     AnalysisResponse,
     DiagramResponse,
     RejectionRequest,
+    RetakeAnalysisRequest,
     SqlResponse,
     StartAnalysisRequest,
     StartAnalysisResponse,
@@ -61,6 +63,33 @@ async def start_analysis(
     workflow: WorkflowDep,
 ) -> StartAnalysisResponse:
     """Create a session, encrypt credentials, and launch the workflow."""
+    session_id = await _bootstrap_session(payload, repo, session, vault)
+
+    background.add_task(_run_workflow, workflow, session_id, payload)
+
+    _logger.info(
+        "analysis.started",
+        session_id=str(session_id),
+        user_email=str(payload.user_email),
+        openproject_task_id=payload.openproject_task_id,
+    )
+    return StartAnalysisResponse(
+        session_id=session_id,
+        status=AnalysisStatus.PENDING,
+        approval_state=ApprovalState.PENDING,
+    )
+
+
+async def _bootstrap_session(
+    payload: StartAnalysisRequest,
+    repo: RepoDep,
+    session: SessionDep,
+    vault: VaultDep,
+) -> UUID:
+    """Persist a new session row + encrypted credential; return session id.
+
+    Shared by ``POST /analysis/start`` and ``POST /analysis/retake``.
+    """
     # 1. Build a DatabaseConnection — password held as SecretStr.
     connection = DatabaseConnection(
         database_type=payload.database_type,
@@ -83,28 +112,67 @@ async def start_analysis(
 
     # 3. Encrypt + store the customer DB credential.
     encrypted = vault.encrypt(connection)
-    await repo.store_credential(session_id=session_row.id, credential=encrypted)
+    await repo.store_credential(
+        session_id=session_row.id, credential=encrypted
+    )
     await session.commit()
+    return session_row.id
 
-    # 4. Launch the workflow in the background. The graph will run up to
-    # the approval interrupt and persist state via the PG checkpointer.
+
+# ---------------------------------------------------------------------------
+# POST /analysis/retake
+# ---------------------------------------------------------------------------
+@router.post(
+    "/retake",
+    response_model=StartAnalysisResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def retake_analysis(
+    payload: RetakeAnalysisRequest,
+    background: BackgroundTasks,
+    repo: RepoDep,
+    session: SessionDep,
+    vault: VaultDep,
+    workflow: WorkflowDep,
+) -> StartAnalysisResponse:
+    """Disparar uma nova análise (retomada) na mesma task do OpenProject.
+
+    O DBA usa esta rota quando, ao ler o comentário anterior na task, nota
+    que a abordagem proposta não resolve adequadamente o problema. Uma
+    sessão totalmente nova é criada, todo o fluxo executado do zero e ao
+    final um novo comentário (com cabeçalho “Nova abordagem”) é anexado
+    à mesma task, preservando o histórico.
+    """
+    # Vincula esta retomada à sessão mais recente da mesma task (apenas
+    # para auditoria / referência no comentário).
+    parent_session_id = await repo.latest_session_for_task(
+        payload.openproject_task_id
+    )
+
+    new_session_id = await _bootstrap_session(payload, repo, session, vault)
+
     background.add_task(
         _run_workflow,
         workflow,
-        session_row.id,
+        new_session_id,
         payload,
+        True,
+        parent_session_id,
     )
 
     _logger.info(
-        "analysis.started",
-        session_id=str(session_row.id),
-        user_email=str(payload.user_email),
+        "analysis.retake_started",
+        session_id=str(new_session_id),
+        parent_session_id=(
+            str(parent_session_id) if parent_session_id else None
+        ),
         openproject_task_id=payload.openproject_task_id,
     )
     return StartAnalysisResponse(
-        session_id=session_row.id,
+        session_id=new_session_id,
         status=AnalysisStatus.PENDING,
         approval_state=ApprovalState.PENDING,
+        message="Retake started",
     )
 
 
@@ -112,6 +180,8 @@ async def _run_workflow(
     workflow: WorkflowDep,  # type: ignore[valid-type]
     session_id: UUID,
     payload: StartAnalysisRequest,
+    is_retake: bool = False,
+    parent_session_id: UUID | None = None,
 ) -> None:
     try:
         await workflow.start(  # type: ignore[attr-defined]
@@ -127,6 +197,8 @@ async def _run_workflow(
                 f"{r.source_entity}->{r.target_entity}:{r.cardinality}"
                 for r in payload.relationships
             ],
+            is_retake=is_retake,
+            parent_session_id=parent_session_id,
         )
     except asyncio.CancelledError:  # pragma: no cover
         raise
@@ -206,11 +278,61 @@ async def get_diagram(session_id: UUID, repo: RepoDep) -> DiagramResponse:
     artifact = await repo.latest_artifact(session_id, ArtifactType.DIAGRAM_MERMAID)
     if not artifact:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Diagram not available yet")
+
+    # Recupera o snapshot da sessão para extrair as medidas que a IA
+    # propõe como solução ao problema descrito na task.
+    try:
+        row = await repo.get_session(session_id)
+        snapshot: dict[str, Any] = row.result_snapshot or {}
+    except AnalysisNotFoundError:
+        snapshot = {}
+
+    proposed_actions, rationale = _summarize_proposed_actions(snapshot)
+
     return DiagramResponse(
         session_id=session_id,
         content=artifact.content,
         summary=(artifact.artifact_metadata or {}).get("summary"),
+        rationale=rationale,
+        proposed_actions=proposed_actions,
     )
+
+
+def _summarize_proposed_actions(
+    snapshot: dict[str, Any],
+) -> tuple[list[str], str | None]:
+    """Extract narrative + bullet-style actions from the result snapshot.
+
+    The snapshot is the JSON-serialised :class:`AnalysisResult` persisted
+    by the ``merge_results`` node, so all fields are dictionaries.
+    """
+    rationale_parts: list[str] = []
+    ir = snapshot.get("project_ir") or {}
+    rm = snapshot.get("relational_model") or {}
+    if isinstance(ir, dict) and ir.get("notes"):
+        rationale_parts.append(str(ir["notes"]).strip())
+    if isinstance(rm, dict) and rm.get("notes"):
+        rationale_parts.append(str(rm["notes"]).strip())
+    rationale = "\n\n".join(rationale_parts) if rationale_parts else None
+
+    actions: list[str] = []
+    if isinstance(rm, dict):
+        for table in rm.get("tables") or []:
+            if not isinstance(table, dict):
+                continue
+            name = table.get("name")
+            desc = (table.get("description") or "").strip()
+            if name and desc:
+                actions.append(f"Tabela `{name}`: {desc}")
+            elif name:
+                actions.append(f"Tabela `{name}`")
+    for rec in snapshot.get("performance_recommendations") or []:
+        if isinstance(rec, dict) and rec.get("title"):
+            actions.append(f"Performance — {rec['title']}")
+    for rec in snapshot.get("security_recommendations") or []:
+        if isinstance(rec, dict) and rec.get("title"):
+            actions.append(f"Segurança — {rec['title']}")
+    return actions, rationale
 
 
 # ---------------------------------------------------------------------------

@@ -5,10 +5,11 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from backend.agents.base import BaseAgent
+from backend.agents.knowledge import build_system_prompt
 from backend.domain.models.ir import RelationalModel
 from backend.domain.models.recommendations import PerformanceRecommendation
 
-_SYSTEM_PROMPT = """\
+_ROLE_PROMPT = """\
 You are a senior database performance engineer.
 
 Analyze the provided RelationalModel and produce concrete performance
@@ -31,6 +32,8 @@ Each recommendation must include:
 DO NOT include credentials or any secret data.
 Reply strictly using the provided structured schema.
 """
+
+_SYSTEM_PROMPT = build_system_prompt(_ROLE_PROMPT)
 
 
 class PerformanceOutput(BaseModel):
