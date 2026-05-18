@@ -46,6 +46,9 @@ Guidelines:
 - Highlight which elements are NEW vs ALTERED vs REFERENCED. Use node
   labels, comments, or grouping (subgraphs) when the diagram type
   supports it.
+  IMPORTANT: ``erDiagram`` DOES NOT support ``subgraph``, ``classDef``, or ``class``.
+  If you must use subgraphs or styling, choose a ``flowchart`` instead, or simply
+  add notes to the ``erDiagram`` without using invalid syntax.
 - Keep the diagram small enough to be read at a glance - prefer clarity
   over completeness.
 - The ``content`` field MUST contain ONLY valid Mermaid source code.
